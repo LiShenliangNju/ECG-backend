@@ -50,6 +50,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/LCD/lcd_init.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/IIR.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ecg_signal.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ecg_rpeak.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/heart_rate.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ecg_measure.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/FilteringFunctions/arm_biquad_cascade_df1_f32.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/FilteringFunctions/arm_biquad_cascade_df1_init_f32.c
 )
