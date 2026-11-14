@@ -23,6 +23,7 @@
 #include "spi.h"
 #include "tim.h"
 #include "gpio.h"
+#include "ecg_acquisition.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -95,6 +96,10 @@ int main(void)
   MX_TIM2_Init();
   MX_SPI5_Init();
   /* USER CODE BEGIN 2 */
+  if (ECG_Acquisition_Start() != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /* USER CODE END 2 */
 
@@ -102,6 +107,22 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    ECG_SampleBlock block;
+
+    if (ECG_Acquisition_HasFault() != 0U)
+    {
+      Error_Handler();
+    }
+
+    if (ECG_Acquisition_TryGetBlock(&block) != 0U)
+    {
+      if (ECG_Acquisition_ReleaseBlock(block.half) == 0U)
+      {
+        Error_Handler();
+      }
+      HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+    }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
