@@ -2,6 +2,7 @@
 #define ECG_RPEAK_H
 
 #include "arm_math.h"
+#include "key_input.h"
 
 #define ECG_RPEAK_SAMPLE_RATE_HZ 1000U
 #define ECG_RPEAK_DEFAULT_THRESHOLD_MV 0.10f
@@ -37,9 +38,23 @@ typedef struct
   float32_t value_mv;
 } ECG_RPeakEvent;
 
+typedef struct
+{
+  float32_t current_threshold_mv;
+  float32_t min_threshold_mv;
+  float32_t max_threshold_mv;
+  float32_t step_mv;
+  float32_t long_step_mv;
+} ECG_RPeakThresholdConfig;
+
 void ECG_RPeak_Init(ECG_RPeakDetector *detector);
 float32_t ECG_RPeak_SetThreshold(ECG_RPeakDetector *detector, float32_t threshold_mv);
 float32_t ECG_RPeak_GetThreshold(const ECG_RPeakDetector *detector);
+void ECG_RPeak_SetThresholdConfig(ECG_RPeakDetector *detector,
+                                 const ECG_RPeakThresholdConfig *config);
+float32_t ECG_RPeak_ApplyKeyStep(ECG_RPeakDetector *detector,
+                                 ECG_KeyEvent event,
+                                 uint8_t increase);
 
 /* sample_index must be a continuous 1 kHz counter shared with the other ECG
  * modules so that timestamp differences are milliseconds across counter wrap. */
