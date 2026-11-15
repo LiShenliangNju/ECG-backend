@@ -1,8 +1,9 @@
 #ifndef ECG_SIGNAL_H
 #define ECG_SIGNAL_H
 
-#include "main.h"
 #include "arm_math.h"
+
+#include <stdint.h>
 
 #define ECG_ADC_RESOLUTION_BITS 12U
 #define ECG_ADC_MAX_CODE ((1U << ECG_ADC_RESOLUTION_BITS) - 1U)

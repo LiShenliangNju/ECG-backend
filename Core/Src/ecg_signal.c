@@ -1,6 +1,7 @@
 #include "ecg_signal.h"
 
 #include <math.h>
+#include <stddef.h>
 
 void ECG_Signal_AdcCodeToMillivolts(uint16_t adc_code, float32_t *millivolts)
 {

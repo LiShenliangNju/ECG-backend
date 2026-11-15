@@ -423,24 +423,79 @@ static void TestPipelineCounterWrap(void)
   CHECK_TRUE(result.last_measurement.valid == 1U);
 }
 
-int main(void)
+static int RunModuleTests(const char *module)
 {
-  TestDetectionAcrossBlocks();
-  TestRefractoryAndInvalidCandidates();
-  TestShortAndLongRrDetection();
-  TestThresholdAdjustment();
-  TestHeartRateStartupAndSmoothing();
-  TestHeartRateRrBounds();
-  TestHeartRateCounterWrap();
-  TestBeatPeakToPeak();
-  TestPipelineCounterWrap();
-
-  if (g_failures != 0U)
+  if (strcmp(module, "rpeak") == 0)
   {
-    printf("%u checks failed\n", g_failures);
-    return 1;
+    TestRefractoryAndInvalidCandidates();
+    TestShortAndLongRrDetection();
+    TestThresholdAdjustment();
+  }
+  else if (strcmp(module, "heart_rate") == 0)
+  {
+    TestHeartRateStartupAndSmoothing();
+    TestHeartRateRrBounds();
+    TestHeartRateCounterWrap();
+  }
+  else if (strcmp(module, "measure") == 0)
+  {
+    TestBeatPeakToPeak();
+  }
+  else if (strcmp(module, "pipeline") == 0)
+  {
+    TestDetectionAcrossBlocks();
+    TestPipelineCounterWrap();
+  }
+  else
+  {
+    return 0;
   }
 
-  printf("all stage 3 checks passed\n");
-  return 0;
+  return 1;
+}
+
+int main(int argc, char *argv[])
+{
+  if (argc == 1)
+  {
+    TestDetectionAcrossBlocks();
+    TestRefractoryAndInvalidCandidates();
+    TestShortAndLongRrDetection();
+    TestThresholdAdjustment();
+    TestHeartRateStartupAndSmoothing();
+    TestHeartRateRrBounds();
+    TestHeartRateCounterWrap();
+    TestBeatPeakToPeak();
+    TestPipelineCounterWrap();
+
+    if (g_failures != 0U)
+    {
+      printf("%u checks failed\n", g_failures);
+      return 1;
+    }
+
+    printf("all stage 3 checks passed\n");
+    return 0;
+  }
+
+  if ((argc == 3) && (strcmp(argv[1], "--module") == 0))
+  {
+    if (RunModuleTests(argv[2]) == 0)
+    {
+      printf("unknown module: %s\n", argv[2]);
+      return 2;
+    }
+
+    if (g_failures != 0U)
+    {
+      printf("%u checks failed\n", g_failures);
+      return 1;
+    }
+
+    printf("all %s checks passed\n", argv[2]);
+    return 0;
+  }
+
+  printf("usage: %s [--module rpeak|heart_rate|measure|pipeline]\n", argv[0]);
+  return 2;
 }
