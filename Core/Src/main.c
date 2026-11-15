@@ -24,6 +24,8 @@
 #include "tim.h"
 #include "gpio.h"
 #include "ecg_acquisition.h"
+#include "ecg_display.h"
+#include "delay.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -95,6 +97,11 @@ int main(void)
   MX_ADC1_Init();
   MX_TIM2_Init();
   MX_SPI5_Init();
+  delay_init(100U);
+  LCD_Init();
+  ECG_DisplayState display_state;
+  ECG_Display_Init(&display_state);
+  ECG_Display_DrawStaticFrame(&display_state);
   /* USER CODE BEGIN 2 */
   if (ECG_Acquisition_Start() != HAL_OK)
   {
