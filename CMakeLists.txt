@@ -49,6 +49,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/LCD/lcd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/LCD/lcd_init.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/IIR.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ecg_acquisition.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ecg_signal.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ecg_rpeak.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/heart_rate.c
