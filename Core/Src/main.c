@@ -40,6 +40,21 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum
+{
+  ECG_FAULT_SYSTEM_INIT = 0U,
+  ECG_FAULT_GPIO_INIT,
+  ECG_FAULT_DMA_INIT,
+  ECG_FAULT_SPI_INIT,
+  ECG_FAULT_LCD_INIT,
+  ECG_FAULT_ADC_INIT,
+  ECG_FAULT_TIM_INIT,
+  ECG_FAULT_CLOCK_CONFIG,
+  ECG_FAULT_ACQUISITION_START,
+  ECG_FAULT_DMA_OVERRUN,
+  ECG_FAULT_BLOCK_RELEASE,
+  ECG_FAULT_ACQUISITION_API
+} ECG_FaultReason;
 
 /* USER CODE END PTD */
 
@@ -66,6 +81,11 @@ static uint8_t g_signal_initialized = 0U;
 static float32_t g_filtered_buffer[ECG_DMA_HALF_LENGTH];
 static float32_t g_downsampled_buffer[ECG_DMA_HALF_LENGTH / ECG_DOWNSAMPLE_FACTOR];
 static uint32_t g_sample_index = 0U;
+static uint8_t g_lcd_initialized = 0U;
+static uint8_t g_acquisition_started = 0U;
+volatile ECG_FaultReason g_ecg_fault_reason = ECG_FAULT_SYSTEM_INIT;
+volatile uint32_t g_ecg_fault_detail;
+volatile uint32_t g_ecg_shutdown_status;
 
 /* USER CODE END PV */
 
@@ -73,6 +93,7 @@ static uint32_t g_sample_index = 0U;
 static void ECG_InitializeTopLevelModules(void);
 static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block);
 static void ECG_UpdateKeyThresholds(void);
+static void ECG_StopWithFault(ECG_FaultReason reason, uint32_t detail);
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
@@ -111,25 +132,36 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
+  g_ecg_fault_reason = ECG_FAULT_GPIO_INIT;
   MX_GPIO_Init();
+  g_ecg_fault_reason = ECG_FAULT_DMA_INIT;
   MX_DMA_Init();
-  MX_ADC1_Init();
-  MX_TIM2_Init();
+  g_ecg_fault_reason = ECG_FAULT_SPI_INIT;
   MX_SPI5_Init();
   delay_init(100U);
+  g_ecg_fault_reason = ECG_FAULT_LCD_INIT;
   LCD_Init();
+  g_lcd_initialized = 1U;
 
   ECG_DisplayState display_state;
   ECG_Display_Init(&display_state);
   ECG_Display_DrawStaticFrame(&display_state);
 
+  g_ecg_fault_reason = ECG_FAULT_ADC_INIT;
+  MX_ADC1_Init();
+  g_ecg_fault_reason = ECG_FAULT_TIM_INIT;
+  MX_TIM2_Init();
   ECG_InitializeTopLevelModules();
+  g_ecg_fault_reason = ECG_FAULT_SYSTEM_INIT;
 
   /* USER CODE BEGIN 2 */
-  if (ECG_Acquisition_Start() != HAL_OK)
+  const HAL_StatusTypeDef acquisition_status = ECG_Acquisition_Start();
+  if (acquisition_status != HAL_OK)
   {
-    Error_Handler();
+    ECG_StopWithFault(ECG_FAULT_ACQUISITION_START,
+                      (uint32_t)acquisition_status);
   }
+  g_acquisition_started = 1U;
 
   /* USER CODE END 2 */
 
@@ -138,20 +170,32 @@ int main(void)
   while (1)
   {
     ECG_SampleBlock block;
+    const ECG_AcquisitionResult block_result =
+        ECG_Acquisition_TryGetBlock(&block);
 
-    if (ECG_Acquisition_HasFault() != 0U)
-    {
-      Error_Handler();
-    }
-
-    if (ECG_Acquisition_TryGetBlock(&block) != 0U)
+    if (block_result == ECG_ACQUISITION_RESULT_BLOCK_READY)
     {
       ECG_ProcessSampleBlock(&block);
       if (ECG_Acquisition_ReleaseBlock(block.half) == 0U)
       {
-        Error_Handler();
+        ECG_StopWithFault(ECG_FAULT_BLOCK_RELEASE, (uint32_t)block.half);
       }
       HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+    }
+    else if (block_result == ECG_ACQUISITION_RESULT_FAULT_LATCHED)
+    {
+      ECG_StopWithFault(ECG_FAULT_DMA_OVERRUN,
+                        ECG_Acquisition_GetOverrunCount());
+    }
+    else if (block_result == ECG_ACQUISITION_RESULT_BLOCK_ACTIVE)
+    {
+      ECG_StopWithFault(ECG_FAULT_ACQUISITION_API,
+                        (uint32_t)block_result);
+    }
+    else if (block_result != ECG_ACQUISITION_RESULT_NO_BLOCK)
+    {
+      ECG_StopWithFault(ECG_FAULT_ACQUISITION_API,
+                        (uint32_t)block_result);
     }
 
     ECG_UpdateKeyThresholds();
@@ -190,7 +234,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
-    Error_Handler();
+    ECG_StopWithFault(ECG_FAULT_CLOCK_CONFIG, 1U);
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
@@ -204,11 +248,18 @@ void SystemClock_Config(void)
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
   {
-    Error_Handler();
+    ECG_StopWithFault(ECG_FAULT_CLOCK_CONFIG, 2U);
   }
 }
 
 /* USER CODE BEGIN 4 */
+static void ECG_StopWithFault(ECG_FaultReason reason, uint32_t detail)
+{
+  g_ecg_fault_reason = reason;
+  g_ecg_fault_detail = detail;
+  Error_Handler();
+}
+
 static void ECG_InitializeTopLevelModules(void)
 {
   ECG_RPeak_Init(&g_rpeak_detector);
@@ -308,7 +359,92 @@ static void ECG_UpdateKeyThresholds(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
+  static const uint8_t system_init_message[] = "SYSTEM INIT ERROR";
+  static const uint8_t gpio_init_message[] = "GPIO INIT ERROR";
+  static const uint8_t dma_init_message[] = "DMA INIT ERROR";
+  static const uint8_t spi_init_message[] = "SPI INIT ERROR";
+  static const uint8_t lcd_init_message[] = "LCD INIT ERROR";
+  static const uint8_t adc_init_message[] = "ADC INIT ERROR";
+  static const uint8_t tim_init_message[] = "TIM INIT ERROR";
+  static const uint8_t clock_message[] = "CLOCK CONFIG ERROR";
+  static const uint8_t acquisition_start_message[] = "ACQ START FAILED";
+  static const uint8_t overrun_message[] = "DMA OVERRUN";
+  static const uint8_t release_message[] = "BLOCK RELEASE ERROR";
+  static const uint8_t api_message[] = "ACQ API ERROR";
+  const uint8_t *fault_message = system_init_message;
+
+  if (g_acquisition_started != 0U)
+  {
+    if (HAL_TIM_Base_Stop(&htim2) != HAL_OK)
+    {
+      g_ecg_shutdown_status |= 1U;
+    }
+    if (HAL_ADC_Stop_DMA(&hadc1) != HAL_OK)
+    {
+      g_ecg_shutdown_status |= 2U;
+    }
+    g_acquisition_started = 0U;
+  }
+
+  switch (g_ecg_fault_reason)
+  {
+    case ECG_FAULT_GPIO_INIT:
+      fault_message = gpio_init_message;
+      break;
+    case ECG_FAULT_DMA_INIT:
+      fault_message = dma_init_message;
+      break;
+    case ECG_FAULT_SPI_INIT:
+      fault_message = spi_init_message;
+      break;
+    case ECG_FAULT_LCD_INIT:
+      fault_message = lcd_init_message;
+      break;
+    case ECG_FAULT_ADC_INIT:
+      fault_message = adc_init_message;
+      break;
+    case ECG_FAULT_TIM_INIT:
+      fault_message = tim_init_message;
+      break;
+    case ECG_FAULT_CLOCK_CONFIG:
+      fault_message = clock_message;
+      break;
+    case ECG_FAULT_ACQUISITION_START:
+      fault_message = acquisition_start_message;
+      break;
+    case ECG_FAULT_DMA_OVERRUN:
+      fault_message = overrun_message;
+      break;
+    case ECG_FAULT_BLOCK_RELEASE:
+      fault_message = release_message;
+      break;
+    case ECG_FAULT_ACQUISITION_API:
+      fault_message = api_message;
+      break;
+    case ECG_FAULT_SYSTEM_INIT:
+    default:
+      fault_message = system_init_message;
+      break;
+  }
+
+  if (g_lcd_initialized != 0U)
+  {
+    LCD_Fill(0U, 0U, ECG_DISPLAY_WIDTH, ECG_DISPLAY_HEIGHT, BLACK);
+    LCD_ShowString(12U, 48U, (const uint8_t *)"SYSTEM HALTED",
+                   RED, BLACK, 2U, 0U);
+    LCD_ShowString(12U, 88U, fault_message, WHITE, BLACK, 2U, 0U);
+    if (g_ecg_shutdown_status == 0U)
+    {
+      LCD_ShowString(12U, 144U, (const uint8_t *)"RESET BOARD",
+                     YELLOW, BLACK, 2U, 0U);
+    }
+    else
+    {
+      LCD_ShowString(12U, 144U, (const uint8_t *)"STOP FAILED",
+                     YELLOW, BLACK, 2U, 0U);
+    }
+  }
+
   __disable_irq();
   while (1)
   {
