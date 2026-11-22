@@ -1,5 +1,41 @@
 cmake_minimum_required(VERSION 3.22)
 
+option(ECG_HOST_VALIDATION "Build host-side ECG signal validation tests" OFF)
+option(ECG_STAGE2_HIL "Enable stage 2 hardware-in-the-loop capture hooks" OFF)
+option(ECG_STAGE2_HIL_INJECT_FILTER_ERROR
+       "Force one filter error for the stage 2 HIL fault-screen test" OFF)
+
+if(ECG_HOST_VALIDATION)
+    project(ECG-backend-host-validation LANGUAGES C)
+
+    enable_testing()
+
+    add_executable(ecg_stage2_validation
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tests/test_ecg_signal.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ecg_signal.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/IIR.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/FilteringFunctions/arm_biquad_cascade_df1_f32.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/FilteringFunctions/arm_biquad_cascade_df1_init_f32.c
+    )
+
+    target_include_directories(ecg_stage2_validation PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc
+        ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/CMSIS/DSP/Include
+        ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/CMSIS/Include
+    )
+
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(ecg_stage2_validation PRIVATE -Wall -Wextra -Werror)
+    endif()
+
+    if(NOT MSVC)
+        target_link_libraries(ecg_stage2_validation PRIVATE m)
+    endif()
+
+    add_test(NAME ecg_stage2_validation COMMAND ecg_stage2_validation)
+    return()
+endif()
+
 #
 # This file is generated only once,
 # and is not re-generated if converter is called multiple times.
@@ -33,6 +69,22 @@ enable_language(C ASM)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
+
+if(ECG_STAGE2_HIL)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ecg_stage2_hil.c
+    )
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ECG_STAGE2_HIL=1)
+endif()
+
+if(ECG_STAGE2_HIL_INJECT_FILTER_ERROR)
+    if(NOT ECG_STAGE2_HIL)
+        message(FATAL_ERROR "ECG_STAGE2_HIL_INJECT_FILTER_ERROR requires ECG_STAGE2_HIL=ON")
+    endif()
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        ECG_STAGE2_HIL_INJECT_FILTER_ERROR=1
+    )
+endif()
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)

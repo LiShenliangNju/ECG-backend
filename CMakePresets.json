@@ -23,6 +23,32 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
+        },
+        {
+            "name": "HostValidation",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "ECG_HOST_VALIDATION": "ON"
+            }
+        },
+        {
+            "name": "HILValidation",
+            "inherits": "Debug",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "ECG_STAGE2_HIL": "ON",
+                "ECG_STAGE2_HIL_INJECT_FILTER_ERROR": "OFF"
+            }
+        },
+        {
+            "name": "HILFilterFault",
+            "inherits": "HILValidation",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "ECG_STAGE2_HIL_INJECT_FILTER_ERROR": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -33,6 +59,27 @@
         {
             "name": "Release",
             "configurePreset": "Release"
+        },
+        {
+            "name": "HostValidation",
+            "configurePreset": "HostValidation"
+        },
+        {
+            "name": "HILValidation",
+            "configurePreset": "HILValidation"
+        },
+        {
+            "name": "HILFilterFault",
+            "configurePreset": "HILFilterFault"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "HostValidation",
+            "configurePreset": "HostValidation",
+            "output": {
+                "outputOnFailure": true
+            }
         }
     ]
 }

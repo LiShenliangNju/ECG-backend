@@ -32,6 +32,9 @@
 #include "ecg_signal.h"
 #include "heart_rate.h"
 #include "key_input.h"
+#if defined(ECG_STAGE2_HIL)
+#include "ecg_stage2_hil.h"
+#endif
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -53,7 +56,11 @@ typedef enum
   ECG_FAULT_ACQUISITION_START,
   ECG_FAULT_DMA_OVERRUN,
   ECG_FAULT_BLOCK_RELEASE,
-  ECG_FAULT_ACQUISITION_API
+  ECG_FAULT_ACQUISITION_API,
+  ECG_FAULT_SIGNAL_FILTER,
+#if defined(ECG_STAGE2_HIL)
+  ECG_FAULT_HIL_CAPTURE_STOP
+#endif
 } ECG_FaultReason;
 
 /* USER CODE END PTD */
@@ -79,7 +86,8 @@ static ECG_KeyInput g_key2;
 static ECG_DownsamplerState g_downsampler;
 static uint8_t g_signal_initialized = 0U;
 static float32_t g_filtered_buffer[ECG_DMA_HALF_LENGTH];
-static float32_t g_downsampled_buffer[ECG_DMA_HALF_LENGTH / ECG_DOWNSAMPLE_FACTOR];
+static float32_t g_downsampled_buffer[
+    (ECG_DMA_HALF_LENGTH + ECG_DOWNSAMPLE_FACTOR - 1U) / ECG_DOWNSAMPLE_FACTOR];
 static uint32_t g_sample_index = 0U;
 static uint8_t g_lcd_initialized = 0U;
 static uint8_t g_acquisition_started = 0U;
@@ -94,6 +102,9 @@ static void ECG_InitializeTopLevelModules(void);
 static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block);
 static void ECG_UpdateKeyThresholds(void);
 static void ECG_StopWithFault(ECG_FaultReason reason, uint32_t detail);
+#if defined(ECG_STAGE2_HIL)
+static void ECG_Stage2HIL_StopAcquisition(void);
+#endif
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
@@ -152,6 +163,9 @@ int main(void)
   g_ecg_fault_reason = ECG_FAULT_TIM_INIT;
   MX_TIM2_Init();
   ECG_InitializeTopLevelModules();
+#if defined(ECG_STAGE2_HIL)
+  ECG_Stage2HIL_Init();
+#endif
   g_ecg_fault_reason = ECG_FAULT_SYSTEM_INIT;
 
   /* USER CODE BEGIN 2 */
@@ -169,21 +183,45 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+#if defined(ECG_STAGE2_HIL)
+    if (g_ecg_stage2_hil_capture.acquisition_stopped != 0U)
+    {
+      __WFI();
+      continue;
+    }
+#endif
+
     ECG_SampleBlock block;
     const ECG_AcquisitionResult block_result =
         ECG_Acquisition_TryGetBlock(&block);
 
     if (block_result == ECG_ACQUISITION_RESULT_BLOCK_READY)
     {
+#if defined(ECG_STAGE2_HIL)
+      const uint32_t ready_start_cycles =
+          ECG_Stage2HIL_GetCycleCount();
+#endif
       ECG_ProcessSampleBlock(&block);
       if (ECG_Acquisition_ReleaseBlock(block.half) == 0U)
       {
         ECG_StopWithFault(ECG_FAULT_BLOCK_RELEASE, (uint32_t)block.half);
       }
+#if defined(ECG_STAGE2_HIL)
+      ECG_Stage2HIL_RecordReadyToRelease(
+          ECG_Stage2HIL_GetCycleCount() - ready_start_cycles);
+      if (ECG_Stage2HIL_IsCaptureComplete() != 0U)
+      {
+        ECG_Stage2HIL_StopAcquisition();
+      }
+#endif
       HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
     }
     else if (block_result == ECG_ACQUISITION_RESULT_FAULT_LATCHED)
     {
+#if defined(ECG_STAGE2_HIL)
+      g_ecg_stage2_hil_capture.dma_overrun_count =
+          ECG_Acquisition_GetOverrunCount();
+#endif
       ECG_StopWithFault(ECG_FAULT_DMA_OVERRUN,
                         ECG_Acquisition_GetOverrunCount());
     }
@@ -260,6 +298,33 @@ static void ECG_StopWithFault(ECG_FaultReason reason, uint32_t detail)
   Error_Handler();
 }
 
+#if defined(ECG_STAGE2_HIL)
+static void ECG_Stage2HIL_StopAcquisition(void)
+{
+  const HAL_StatusTypeDef tim_status = HAL_TIM_Base_Stop(&htim2);
+  const HAL_StatusTypeDef adc_status = HAL_ADC_Stop_DMA(&hadc1);
+
+  if (tim_status != HAL_OK)
+  {
+    g_ecg_shutdown_status |= 1U;
+  }
+  if (adc_status != HAL_OK)
+  {
+    g_ecg_shutdown_status |= 2U;
+  }
+
+  g_acquisition_started = 0U;
+  ECG_Stage2HIL_RecordStop(tim_status, adc_status,
+                           ECG_Acquisition_GetOverrunCount());
+  if ((tim_status != HAL_OK) || (adc_status != HAL_OK))
+  {
+    const uint32_t detail = ((uint32_t)tim_status << 16U) |
+                            (uint32_t)adc_status;
+    ECG_StopWithFault(ECG_FAULT_HIL_CAPTURE_STOP, detail);
+  }
+}
+#endif
+
 static void ECG_InitializeTopLevelModules(void)
 {
   ECG_RPeak_Init(&g_rpeak_detector);
@@ -279,6 +344,13 @@ static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block)
     return;
   }
 
+#if defined(ECG_STAGE2_HIL)
+  const uint32_t process_start_cycles =
+      ECG_Stage2HIL_GetCycleCount();
+  const uint32_t downsampler_phase_before =
+      g_downsampler.samples_in_group;
+#endif
+
   uint32_t converted_count = 0U;
   const uint32_t block_start = block->first_sample_index;
   const uint32_t block_end = block_start + block->sample_count;
@@ -293,13 +365,37 @@ static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block)
     ECG_Measure_ProcessSample(&g_measure_state, sample_index, millivolts);
   }
 
-  IIR_Notch_Process(g_filtered_buffer, block->sample_count);
+#if defined(ECG_STAGE2_HIL)
+  ECG_Stage2HIL_CaptureRawBlock(block, g_filtered_buffer);
+#endif
 
   converted_count = ECG_Signal_DownsampleAverage(&g_downsampler,
                                                 g_filtered_buffer,
                                                 block->sample_count,
                                                 g_downsampled_buffer,
                                                 (uint32_t)(sizeof(g_downsampled_buffer) / sizeof(g_downsampled_buffer[0])));
+#if defined(ECG_STAGE2_HIL)
+  ECG_Stage2HIL_CaptureDecimatedInput(g_downsampled_buffer,
+                                      converted_count);
+#endif
+
+  IIR_NotchStatus filter_status;
+#if defined(ECG_STAGE2_HIL_INJECT_FILTER_ERROR)
+  filter_status = IIR_Notch_Process(g_downsampled_buffer,
+                                    IIR_NOTCH_MAX_BLOCK_SIZE + 1U);
+#else
+  filter_status = IIR_Notch_Process(g_downsampled_buffer, converted_count);
+#endif
+  if (filter_status != IIR_NOTCH_STATUS_OK)
+  {
+#if defined(ECG_STAGE2_HIL)
+    ECG_Stage2HIL_RecordBlock(block, downsampler_phase_before,
+                              g_downsampler.samples_in_group,
+                              converted_count, filter_status,
+                              g_downsampled_buffer, process_start_cycles);
+#endif
+    ECG_StopWithFault(ECG_FAULT_SIGNAL_FILTER, (uint32_t)filter_status);
+  }
 
   for (uint32_t index = 0U; index < converted_count; ++index)
   {
@@ -321,6 +417,13 @@ static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block)
       }
     }
   }
+
+#if defined(ECG_STAGE2_HIL)
+  ECG_Stage2HIL_RecordBlock(block, downsampler_phase_before,
+                            g_downsampler.samples_in_group,
+                            converted_count, filter_status,
+                            g_downsampled_buffer, process_start_cycles);
+#endif
 
   (void)block_end;
 }
@@ -371,6 +474,10 @@ void Error_Handler(void)
   static const uint8_t overrun_message[] = "DMA OVERRUN";
   static const uint8_t release_message[] = "BLOCK RELEASE ERROR";
   static const uint8_t api_message[] = "ACQ API ERROR";
+  static const uint8_t filter_message[] = "FILTER ERROR";
+#if defined(ECG_STAGE2_HIL)
+  static const uint8_t hil_stop_message[] = "HIL CAPTURE STOP ERROR";
+#endif
   const uint8_t *fault_message = system_init_message;
 
   if (g_acquisition_started != 0U)
@@ -421,6 +528,14 @@ void Error_Handler(void)
     case ECG_FAULT_ACQUISITION_API:
       fault_message = api_message;
       break;
+    case ECG_FAULT_SIGNAL_FILTER:
+      fault_message = filter_message;
+      break;
+#if defined(ECG_STAGE2_HIL)
+    case ECG_FAULT_HIL_CAPTURE_STOP:
+      fault_message = hil_stop_message;
+      break;
+#endif
     case ECG_FAULT_SYSTEM_INIT:
     default:
       fault_message = system_init_message;
@@ -431,17 +546,24 @@ void Error_Handler(void)
   {
     LCD_Fill(0U, 0U, ECG_DISPLAY_WIDTH, ECG_DISPLAY_HEIGHT, BLACK);
     LCD_ShowString(12U, 48U, (const uint8_t *)"SYSTEM HALTED",
-                   RED, BLACK, 2U, 0U);
-    LCD_ShowString(12U, 88U, fault_message, WHITE, BLACK, 2U, 0U);
+                   RED, BLACK, 16U, 0U);
+    LCD_ShowString(12U, 88U, fault_message, WHITE, BLACK, 16U, 0U);
+    if (g_ecg_fault_reason == ECG_FAULT_SIGNAL_FILTER)
+    {
+      LCD_ShowString(12U, 120U, (const uint8_t *)"STATUS",
+                     YELLOW, BLACK, 16U, 0U);
+      LCD_ShowIntNum(90U, 120U, g_ecg_fault_detail, 2U,
+                     YELLOW, BLACK, 16U);
+    }
     if (g_ecg_shutdown_status == 0U)
     {
       LCD_ShowString(12U, 144U, (const uint8_t *)"RESET BOARD",
-                     YELLOW, BLACK, 2U, 0U);
+                     YELLOW, BLACK, 16U, 0U);
     }
     else
     {
       LCD_ShowString(12U, 144U, (const uint8_t *)"STOP FAILED",
-                     YELLOW, BLACK, 2U, 0U);
+                     YELLOW, BLACK, 16U, 0U);
     }
   }
 
