@@ -53,6 +53,7 @@ typedef enum
   ECG_FAULT_DMA_INIT,
   ECG_FAULT_SPI_INIT,
   ECG_FAULT_LCD_INIT,
+  ECG_FAULT_LCD_DRAW,
   ECG_FAULT_ADC_INIT,
   ECG_FAULT_TIM_INIT,
   ECG_FAULT_CLOCK_CONFIG,
@@ -102,7 +103,8 @@ volatile uint32_t g_ecg_shutdown_status;
 
 /* Private function prototypes -----------------------------------------------*/
 static void ECG_InitializeTopLevelModules(void);
-static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block);
+static ECG_DisplayStatus ECG_ProcessSampleBlock(const ECG_SampleBlock *block,
+                                                ECG_DisplayState *display_state);
 static void ECG_UpdateKeyThresholds(void);
 static void ECG_StopWithFault(ECG_FaultReason reason, uint32_t detail);
 #if defined(ECG_STAGE2_HIL)
@@ -159,7 +161,12 @@ int main(void)
 
   ECG_DisplayState display_state;
   ECG_Display_Init(&display_state);
-  ECG_Display_DrawStaticFrame(&display_state);
+  const ECG_DisplayStatus display_status =
+      ECG_Display_DrawStaticFrame(&display_state);
+  if (display_status != ECG_DISPLAY_STATUS_OK)
+  {
+    ECG_StopWithFault(ECG_FAULT_LCD_DRAW, (uint32_t)display_status);
+  }
 
   g_ecg_fault_reason = ECG_FAULT_ADC_INIT;
   MX_ADC1_Init();
@@ -207,7 +214,12 @@ int main(void)
       const uint32_t ready_start_cycles =
           ECG_Stage2HIL_GetCycleCount();
 #endif
-      ECG_ProcessSampleBlock(&block);
+      const ECG_DisplayStatus display_status =
+          ECG_ProcessSampleBlock(&block, &display_state);
+      if (display_status != ECG_DISPLAY_STATUS_OK)
+      {
+        ECG_StopWithFault(ECG_FAULT_LCD_DRAW, (uint32_t)display_status);
+      }
       if (ECG_Acquisition_ReleaseBlock(block.half) == 0U)
       {
         ECG_StopWithFault(ECG_FAULT_BLOCK_RELEASE, (uint32_t)block.half);
@@ -247,6 +259,14 @@ int main(void)
     }
 
     ECG_UpdateKeyThresholds();
+
+    const ECG_DisplayStatus display_service_status =
+        ECG_Display_Service(&display_state);
+    if (display_service_status != ECG_DISPLAY_STATUS_OK)
+    {
+      ECG_StopWithFault(ECG_FAULT_LCD_DRAW,
+                        (uint32_t)display_service_status);
+    }
 
     /* USER CODE END WHILE */
 
@@ -347,12 +367,18 @@ static void ECG_InitializeTopLevelModules(void)
   g_signal_initialized = 1U;
 }
 
-static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block)
+static ECG_DisplayStatus ECG_ProcessSampleBlock(const ECG_SampleBlock *block,
+                                                ECG_DisplayState *display_state)
 {
-  if ((block == NULL) || (block->samples == NULL) || (block->sample_count == 0U))
+  if ((block == NULL) || (block->samples == NULL) ||
+      (block->sample_count == 0U) || (display_state == NULL))
   {
-    return;
+    return ECG_DISPLAY_STATUS_INVALID_ARGUMENT;
   }
+
+  uint32_t display_bpm = (uint32_t)display_state->latest_bpm;
+  float32_t display_peak_to_peak_mv = display_state->latest_peak_to_peak_mv;
+  uint8_t metrics_changed = 0U;
 
 #if defined(ECG_STAGE2_HIL)
   const uint32_t process_start_cycles =
@@ -429,6 +455,17 @@ static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block)
                            &heart_rate_result);
       (void)ECG_Measure_OnRPeak(&g_measure_state, event.sample_index,
                                 &measurement);
+      if (heart_rate_result.average_bpm != display_bpm)
+      {
+        display_bpm = heart_rate_result.average_bpm;
+        metrics_changed = 1U;
+      }
+      if ((measurement.valid != 0U) &&
+          (measurement.peak_to_peak_mv != display_peak_to_peak_mv))
+      {
+        display_peak_to_peak_mv = measurement.peak_to_peak_mv;
+        metrics_changed = 1U;
+      }
 #if defined(ECG_STAGE3_HIL)
       ECG_Stage3HIL_RecordPeak(&event, &heart_rate_result, &measurement);
 #endif
@@ -446,7 +483,21 @@ static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block)
                             g_downsampled_buffer, process_start_cycles);
 #endif
 
+  const ECG_DisplayStatus display_status =
+      ECG_Display_UpdateWaveform(display_state, g_downsampled_buffer,
+                                 converted_count);
+  if (display_status != ECG_DISPLAY_STATUS_OK)
+  {
+    return display_status;
+  }
+  if (metrics_changed != 0U)
+  {
+    ECG_Display_UpdateMetrics(display_state, display_bpm,
+                              display_peak_to_peak_mv);
+  }
+
   (void)block_end;
+  return ECG_DISPLAY_STATUS_OK;
 }
 
 static void ECG_UpdateKeyThresholds(void)
@@ -482,6 +533,7 @@ void Error_Handler(void)
   static const uint8_t dma_init_message[] = "DMA INIT ERROR";
   static const uint8_t spi_init_message[] = "SPI INIT ERROR";
   static const uint8_t lcd_init_message[] = "LCD INIT ERROR";
+  static const uint8_t lcd_draw_message[] = "LCD DRAW ERROR";
   static const uint8_t adc_init_message[] = "ADC INIT ERROR";
   static const uint8_t tim_init_message[] = "TIM INIT ERROR";
   static const uint8_t clock_message[] = "CLOCK CONFIG ERROR";
@@ -521,6 +573,9 @@ void Error_Handler(void)
       break;
     case ECG_FAULT_LCD_INIT:
       fault_message = lcd_init_message;
+      break;
+    case ECG_FAULT_LCD_DRAW:
+      fault_message = lcd_draw_message;
       break;
     case ECG_FAULT_ADC_INIT:
       fault_message = adc_init_message;

@@ -67,3 +67,25 @@ target_include_directories(test_ecg_stage4 PRIVATE
 )
 add_test(NAME ecg_stage4 COMMAND test_ecg_stage4)
 set_tests_properties(ecg_stage4 PROPERTIES LABELS "key_input")
+
+add_executable(test_ecg_display
+    test_ecg_display.c
+    "${ECG_ROOT}/Core/Src/ecg_display.c"
+)
+target_include_directories(test_ecg_display BEFORE PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
+target_include_directories(test_ecg_display PRIVATE
+    "${CORE_INCLUDE_DIR}"
+    "${ECG_ROOT}/Drivers/LCD"
+    "${CMSIS_DSP_INCLUDE_DIR}"
+    "${CMSIS_INCLUDE_DIR}"
+)
+if(NOT MSVC)
+    target_link_libraries(test_ecg_display PRIVATE m)
+endif()
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_ecg_display PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME ecg_display COMMAND test_ecg_display)
+set_tests_properties(ecg_display PROPERTIES LABELS "display")
