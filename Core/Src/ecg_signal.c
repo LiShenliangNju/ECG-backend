@@ -71,6 +71,8 @@ void ECG_Signal_Downsampler_Init(ECG_DownsamplerState *state)
 
   state->accumulator = 0.0f;
   state->samples_in_group = 0U;
+  /* A new stream owns a new 1 kHz timestamp domain starting at index 0. */
+  state->output_sample_count = 0U;
 }
 
 /*
@@ -108,6 +110,9 @@ uint32_t ECG_Signal_DownsampleAverage(ECG_DownsamplerState *state,
 
       state->accumulator = 0.0f;
       state->samples_in_group = 0U;
+      /* Index this output independently of DMA block indices and block boundaries.
+       * The counter advances even when the caller's output capacity discards a value. */
+      state->output_sample_count++;
     }
   }
 

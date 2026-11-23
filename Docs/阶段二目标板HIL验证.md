@@ -6,12 +6,12 @@
 
 ## 专用固件与钩子
 
-- `HILValidation`：记录样本和逐块指标；累积 4096 个 1 kHz 陷波输出后停止 TIM2/ADC DMA 并冻结数据，便于通过 SWD 读取。
+- `HILValidation`：保留阶段二的前 4096 点信号捕获，并继续运行到阶段三累计 12800 个 1 kHz 样本后停止 TIM2/ADC DMA；阶段三捕获详见[阶段三目标板HIL验证](./阶段三目标板HIL验证.md)。
 - `HILFilterFault`：第一块数据调用陷波器时故意请求超长块，验证滤波状态码经统一故障路径停机并显示 LCD 故障页。此固件不能用于信号频响测试。
 - 捕获全局变量：`g_ecg_stage2_hil_capture`。`magic` 应为 `0xEC620001`，`dwt_enabled` 应为 1。
-- 原始和校准数组各最多记录 4096 点；降采样前、后的 1 kHz 数组各记录 4096 点。`capture_complete` 和 `acquisition_stopped` 均为 1 时，采集数据已冻结。
+- 原始和校准数组各最多记录 4096 点；降采样前、后的 1 kHz 数组各记录 4096 点。阶段三 HIL 时，阶段二的 `capture_complete` 只表示这些信号数组已填满；须等 `acquisition_stopped == 1` 才表示整个 12.8 秒捕获已冻结。
 - 逐块记录包含原始块序号、半区、降采样前后相位、输出点数、滤波状态、处理周期和 ready-to-release 周期。钩子不在 DMA ISR 中执行。
-- HIL 固件额外占用约 68 KB RAM；生产固件默认关闭钩子。
+- HILValidation 固件使用约 74 KiB RAM；生产固件默认关闭钩子。
 
 ## 构建
 
@@ -38,7 +38,7 @@ cmake --build --preset HILFilterFault
 
 - 每个原始块为 256 点；以连续样本总数为准，降采样累计输出必须始终等于 `floor(total_raw_samples / 10)`。单块可产生 25 或 26 点，取决于跨块保留的分组相位。
 - `sequence_error_count == 0`、`decimation_error_count == 0`、`filter_error_count == 0`、`dma_overrun_count == 0`。
-- 一次完整捕获应有 `total_raw_samples == 40960`、`total_decimated_samples == 4096`、`block_record_count == 160`；原始捕获数组会在 4096 点后停止增长。
+- 阶段三 HIL 的完整捕获应有 `total_raw_samples == 128000`、`total_decimated_samples == 12800`、`block_record_count == 500`；阶段二各信号数组仍只记录前 4096 点。
 - `max_ready_to_release_cycles < 2560000`，即 100 MHz 下小于 25.6 ms；同时记录 `max_process_cycles`。HIL 捕获复制本身计入处理耗时。
 - 所有滤波状态为 `IIR_NOTCH_STATUS_OK`，捕获的滤波输出应为有限值。
 

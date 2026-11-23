@@ -2,6 +2,22 @@
 
 #include <string.h>
 
+/**
+ * 数据流：
+ * ECG_RPeakEvent.sample_index
+ * -> 与 previous_timestamp 做无符号差值得到 RR(ms)
+ * -> 410–1375 ms 有效区间判定
+ * -> 最近 5 个有效 RR 环形窗口
+ * -> 窗口平均 BPM 和稳定标志
+ *
+ * 所有状态只在主循环/任务上下文访问，峰事件必须按时间顺序到达。
+ * 无符号 32 位减法保留 1 kHz 计数器跨 2^32 回绕的 RR 差值。
+ *
+ * 不变量：窗口计数不超过 5，连续有效计数不超过 5；
+ * stable 等于连续有效计数达到 5 的结果；区间越界会立即清零连续计数、
+ * 清除 stable，但保留已有有效 RR 平滑窗口。
+ */
+
 static uint32_t ComputeAverageBpm(const ECG_HeartRate *state)
 {
   if (state->rr_window_count == 0U)

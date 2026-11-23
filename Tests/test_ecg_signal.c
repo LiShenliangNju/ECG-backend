@@ -58,15 +58,18 @@ static int TestDownsamplerAcrossBlocks(void)
   CHECK_TRUE(ECG_Signal_DownsampleAverage(&state, first_block, 4U, output,
                                           2U) == 0U);
   CHECK_TRUE(state.samples_in_group == 4U);
+  CHECK_TRUE(state.output_sample_count == 0U);
 
   CHECK_TRUE(ECG_Signal_DownsampleAverage(&state, second_block, 6U, output,
                                           2U) == 1U);
   CHECK_TRUE(NearlyEqual(output[0], 5.5f));
   CHECK_TRUE(state.samples_in_group == 0U);
+  CHECK_TRUE(state.output_sample_count == 1U);
 
   CHECK_TRUE(ECG_Signal_DownsampleAverage(&state, third_block, 5U, output,
                                           2U) == 0U);
   CHECK_TRUE(state.samples_in_group == 5U);
+  CHECK_TRUE(state.output_sample_count == 1U);
   return 0;
 }
 

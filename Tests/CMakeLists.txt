@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(ECGBackendHostTests LANGUAGES C)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(ECGBackendHostTests LANGUAGES C)
+endif()
 
 include(CTest)
 
@@ -16,6 +18,9 @@ set(CMSIS_INCLUDE_DIR "${ECG_ROOT}/Drivers/CMSIS/Include")
 add_executable(test_ecg_signal
     test_ecg_signal.c
     "${ECG_ROOT}/Core/Src/ecg_signal.c"
+    "${ECG_ROOT}/Core/Src/IIR.c"
+    "${ECG_ROOT}/Drivers/CMSIS/DSP/Source/FilteringFunctions/arm_biquad_cascade_df1_f32.c"
+    "${ECG_ROOT}/Drivers/CMSIS/DSP/Source/FilteringFunctions/arm_biquad_cascade_df1_init_f32.c"
 )
 target_include_directories(test_ecg_signal PRIVATE
     "${CORE_INCLUDE_DIR}"
@@ -24,6 +29,9 @@ target_include_directories(test_ecg_signal PRIVATE
 )
 if(NOT MSVC)
     target_link_libraries(test_ecg_signal PRIVATE m)
+endif()
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_ecg_signal PRIVATE -Wall -Wextra -Werror)
 endif()
 add_test(NAME ecg_signal COMMAND test_ecg_signal)
 set_tests_properties(ecg_signal PROPERTIES LABELS "signal")

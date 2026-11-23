@@ -35,6 +35,9 @@
 #if defined(ECG_STAGE2_HIL)
 #include "ecg_stage2_hil.h"
 #endif
+#if defined(ECG_STAGE3_HIL)
+#include "ecg_stage3_hil.h"
+#endif
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -166,6 +169,9 @@ int main(void)
 #if defined(ECG_STAGE2_HIL)
   ECG_Stage2HIL_Init();
 #endif
+#if defined(ECG_STAGE3_HIL)
+  ECG_Stage3HIL_Init();
+#endif
   g_ecg_fault_reason = ECG_FAULT_SYSTEM_INIT;
 
   /* USER CODE BEGIN 2 */
@@ -209,7 +215,11 @@ int main(void)
 #if defined(ECG_STAGE2_HIL)
       ECG_Stage2HIL_RecordReadyToRelease(
           ECG_Stage2HIL_GetCycleCount() - ready_start_cycles);
+#if defined(ECG_STAGE3_HIL)
+      if (ECG_Stage3HIL_IsCaptureComplete() != 0U)
+#else
       if (ECG_Stage2HIL_IsCaptureComplete() != 0U)
+#endif
       {
         ECG_Stage2HIL_StopAcquisition();
       }
@@ -362,13 +372,14 @@ static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block)
     ECG_Signal_AdcCodeToMillivolts(block->samples[index], &millivolts);
     g_filtered_buffer[index] = millivolts;
     g_sample_index = sample_index;
-    ECG_Measure_ProcessSample(&g_measure_state, sample_index, millivolts);
   }
 
 #if defined(ECG_STAGE2_HIL)
   ECG_Stage2HIL_CaptureRawBlock(block, g_filtered_buffer);
 #endif
 
+  const uint32_t first_output_index_before =
+      g_downsampler.output_sample_count;
   converted_count = ECG_Signal_DownsampleAverage(&g_downsampler,
                                                 g_filtered_buffer,
                                                 block->sample_count,
@@ -399,7 +410,13 @@ static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block)
 
   for (uint32_t index = 0U; index < converted_count; ++index)
   {
-    const uint32_t sample_index_1k = (block_start / ECG_DOWNSAMPLE_FACTOR) + index;
+    /* output_sample_count is the continuous 1 kHz counter owned by the decimator.
+     * Deriving it from DMA indices would depend on block alignment and could reset
+     * or duplicate timestamps at block boundaries. */
+    const uint32_t sample_index_1k = first_output_index_before + index;
+    ECG_Measure_ProcessSample(&g_measure_state, sample_index_1k,
+                              g_downsampled_buffer[index]);
+
     ECG_RPeakEvent event;
     if (ECG_RPeak_ProcessSample(&g_rpeak_detector,
                                 g_downsampled_buffer[index],
@@ -407,16 +424,20 @@ static void ECG_ProcessSampleBlock(const ECG_SampleBlock *block)
                                 &event) != 0U)
     {
       ECG_HeartRateResult heart_rate_result;
-      if (ECG_HeartRate_OnPeak(&g_heart_rate, event.sample_index, &heart_rate_result) != 0U)
-      {
-        ECG_BeatMeasurement measurement;
-        if (ECG_Measure_OnRPeak(&g_measure_state, event.sample_index, &measurement) != 0U)
-        {
-          (void)measurement;
-        }
-      }
+      ECG_BeatMeasurement measurement;
+      ECG_HeartRate_OnPeak(&g_heart_rate, event.sample_index,
+                           &heart_rate_result);
+      (void)ECG_Measure_OnRPeak(&g_measure_state, event.sample_index,
+                                &measurement);
+#if defined(ECG_STAGE3_HIL)
+      ECG_Stage3HIL_RecordPeak(&event, &heart_rate_result, &measurement);
+#endif
     }
   }
+
+#if defined(ECG_STAGE3_HIL)
+  ECG_Stage3HIL_RecordSamples(converted_count);
+#endif
 
 #if defined(ECG_STAGE2_HIL)
   ECG_Stage2HIL_RecordBlock(block, downsampler_phase_before,
@@ -438,18 +459,12 @@ static void ECG_UpdateKeyThresholds(void)
 
   if (key1_event != ECG_KEY_EVENT_NONE)
   {
-    ECG_RPeak_SetThreshold(&g_rpeak_detector,
-                           g_rpeak_detector.threshold_mv +
-                               (key1_event == ECG_KEY_EVENT_LONG_PRESS || key1_event == ECG_KEY_EVENT_REPEAT ?
-                                ECG_KEY_LONG_STEP_MV : ECG_KEY_SHORT_STEP_MV));
+    ECG_RPeak_ApplyKeyStep(&g_rpeak_detector, key1_event, 1U);
   }
 
   if (key2_event != ECG_KEY_EVENT_NONE)
   {
-    ECG_RPeak_SetThreshold(&g_rpeak_detector,
-                           g_rpeak_detector.threshold_mv -
-                               (key2_event == ECG_KEY_EVENT_LONG_PRESS || key2_event == ECG_KEY_EVENT_REPEAT ?
-                                ECG_KEY_LONG_STEP_MV : ECG_KEY_SHORT_STEP_MV));
+    ECG_RPeak_ApplyKeyStep(&g_rpeak_detector, key2_event, 0U);
   }
 }
 

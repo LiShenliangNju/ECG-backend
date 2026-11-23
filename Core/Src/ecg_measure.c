@@ -4,6 +4,23 @@
 
 #include <string.h>
 
+/**
+ * 数据流：
+ * 1 kHz 降采样滤波样本及连续时间戳
+ * -> 64 点环形历史
+ * -> 等待确认窗口的 29 点延迟提交
+ * -> 相邻 ecg_rpeak 峰事件补算区间
+ * -> 最小值、最大值、峰峰值
+ *
+ * ProcessSample 和 OnRPeak 都运行在主循环/任务上下文且必须串行调用；
+ * 没有 ISR 写入，不提供临界区保护。输入流发生索引跳变时丢弃当前搏动，
+ * 且 latest 无效，等待下一次 OnRPeak 从新峰建立基准。
+ *
+ * 不变量：committed_index 不超过 29 点延迟之外的最近已提交点；
+ * 首峰只建立下一搏，下一峰才完成上一段区间；峰位置本身和峰后已到达样本
+ * 归入下一搏，不重复计入上一搏。
+ */
+
 #define ECG_MEASURE_COMMIT_LAG_SAMPLES ECG_RPEAK_MAX_CONFIRM_DELAY_SAMPLES
 
 _Static_assert((ECG_MEASURE_HISTORY_LENGTH & ECG_MEASURE_HISTORY_MASK) == 0U,
@@ -36,13 +53,15 @@ static void IncludeRange(ECG_MeasureState *state,
                          uint32_t first_index,
                          uint32_t last_index)
 {
-  const uint32_t count = last_index - first_index + 1U;
-
-  if (count > ECG_MEASURE_HISTORY_LENGTH)
+  /* Unsigned forward difference is valid across 32-bit timestamp wrap.
+   * Reject an empty/reversed interval before indexing the ring. */
+  const uint32_t forward_samples = last_index - first_index;
+  if (forward_samples >= ECG_MEASURE_HISTORY_LENGTH)
   {
     return;
   }
 
+  const uint32_t count = forward_samples + 1U;
   for (uint32_t offset = 0U; offset < count; ++offset)
   {
     const uint32_t index = first_index + offset;

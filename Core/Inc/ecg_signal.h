@@ -40,6 +40,9 @@ typedef struct
 {
   float32_t accumulator;
   uint32_t samples_in_group;
+  /* Number of complete 1 kHz output groups produced by this stream.
+   * Main-loop writes and reads it; Init resets it with the stream. */
+  uint32_t output_sample_count;
 } ECG_DownsamplerState;
 
 /*

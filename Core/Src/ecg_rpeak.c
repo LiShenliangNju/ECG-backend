@@ -2,14 +2,30 @@
 
 #include <string.h>
 
+/**
+ * 数据流：
+ * 1 kHz ECG 样本
+ * -> 低阈值回差及不应期检查
+ * -> 30 点局部最大值确认窗口
+ * -> ECG_RPeakEvent（窗口内最大值及连续索引）
+ * -> 心率模块和每搏波形模块
+ *
+ * Init、阈值调整及逐点处理都运行于主循环/任务上下文，不在 DMA ISR
+ * 中调用。各状态字段只由 detector 的串行调用者读写，DMA 块边界不参与
+ * 状态流转或重置。
+ *
+ * CONFIRM 中窗口计数从 1 开始，并严格递增到 30；window_max_* 始终保存
+ * 已观察到的最大值及其时间戳。平顶窗口保留第一个最大值对应的索引。
+ * 无符号 32 位索引差值用于不应期和计数器回绕，后者按模 2^32 处理。
+ */
+
 static const ECG_RPeakThresholdConfig g_default_threshold_config = {
   ECG_RPEAK_DEFAULT_THRESHOLD_MV,
   ECG_RPEAK_THRESHOLD_MIN_MV,
-  ECG_RPEAK_THRESHOLD_MAX_MV,
-  ECG_KEY_SHORT_STEP_MV,
-  ECG_KEY_LONG_STEP_MV
+  ECG_RPEAK_THRESHOLD_MAX_MV
 };
 
+/** 统一阈值钳位逻辑；主循环/任务上下文调用，不访问共享状态。 */
 static float32_t ClampThreshold(float32_t threshold_mv,
                                 float32_t min_threshold_mv,
                                 float32_t max_threshold_mv)
@@ -145,6 +161,7 @@ uint8_t ECG_RPeak_ProcessSample(ECG_RPeakDetector *detector,
 
   if (detector->state == ECG_RPEAK_STATE_CONFIRM)
   {
+    /* Strict greater-than preserves the first sample when the window has a flat maximum. */
     if (sample_mv > detector->window_max_mv)
     {
       detector->window_max_mv = sample_mv;

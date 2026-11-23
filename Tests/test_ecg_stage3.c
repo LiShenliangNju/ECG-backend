@@ -185,6 +185,27 @@ static void TestShortAndLongRrDetection(void)
   CHECK_TRUE(result.last_heart_rate.stable == 0U);
 }
 
+static void TestFlatPeakUsesFirstMaximum(void)
+{
+  ECG_RPeakDetector detector;
+  ECG_RPeakEvent event;
+
+  ECG_RPeak_Init(&detector);
+  CHECK_TRUE(ECG_RPeak_ProcessSample(&detector, 0.0f, 0U, &event) == 0U);
+  CHECK_TRUE(ECG_RPeak_ProcessSample(&detector, 0.0f, 1U, &event) == 0U);
+  CHECK_TRUE(ECG_RPeak_ProcessSample(&detector, 0.5f, 2U, &event) == 0U);
+  CHECK_TRUE(ECG_RPeak_ProcessSample(&detector, 0.5f, 3U, &event) == 0U);
+
+  for (uint32_t index = 4U; index < 31U; ++index)
+  {
+    CHECK_TRUE(ECG_RPeak_ProcessSample(&detector, 0.0f, index, &event) == 0U);
+  }
+
+  CHECK_TRUE(ECG_RPeak_ProcessSample(&detector, 0.0f, 31U, &event) == 1U);
+  CHECK_TRUE(event.sample_index == 2U);
+  CHECK_FLOAT_EQUAL(event.value_mv, 0.5f);
+}
+
 static void TestThresholdAdjustment(void)
 {
   ECG_RPeakDetector detector;
@@ -429,6 +450,7 @@ static int RunModuleTests(const char *module)
   {
     TestRefractoryAndInvalidCandidates();
     TestShortAndLongRrDetection();
+    TestFlatPeakUsesFirstMaximum();
     TestThresholdAdjustment();
   }
   else if (strcmp(module, "heart_rate") == 0)
@@ -461,6 +483,7 @@ int main(int argc, char *argv[])
     TestDetectionAcrossBlocks();
     TestRefractoryAndInvalidCandidates();
     TestShortAndLongRrDetection();
+    TestFlatPeakUsesFirstMaximum();
     TestThresholdAdjustment();
     TestHeartRateStartupAndSmoothing();
     TestHeartRateRrBounds();
