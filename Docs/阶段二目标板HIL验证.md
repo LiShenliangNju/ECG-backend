@@ -10,7 +10,7 @@
 - `HILFilterFault`：第一块数据调用陷波器时故意请求超长块，验证滤波状态码经统一故障路径停机并显示 LCD 故障页。此固件不能用于信号频响测试。
 - 捕获全局变量：`g_ecg_stage2_hil_capture`。`magic` 应为 `0xEC620001`，`dwt_enabled` 应为 1。
 - 原始和校准数组各最多记录 4096 点；降采样前、后的 1 kHz 数组各记录 4096 点。阶段三 HIL 时，阶段二的 `capture_complete` 只表示这些信号数组已填满；须等 `acquisition_stopped == 1` 才表示整个 12.8 秒捕获已冻结。
-- 逐块记录包含原始块序号、半区、降采样前后相位、输出点数、滤波状态、处理周期和 ready-to-release 周期。钩子不在 DMA ISR 中执行。
+- 逐块记录包含原始块序号、半区、降采样前后相位、输出点数、滤波状态、处理周期和 ready-to-release 周期；`lcd_service_call_count` 与 `max_lcd_service_cycles` 记录主循环调用 `ECG_Display_Service` 的次数和最大单次执行周期。周期只覆盖服务函数自身的同步执行时间，不包括 SPI DMA 在两次调用之间传输的时间。钩子不在 DMA ISR 中执行。
 - HILValidation 固件使用约 74 KiB RAM；生产固件默认关闭钩子。
 
 ## 构建
@@ -40,6 +40,7 @@ cmake --build --preset HILFilterFault
 - `sequence_error_count == 0`、`decimation_error_count == 0`、`filter_error_count == 0`、`dma_overrun_count == 0`。
 - 阶段三 HIL 的完整捕获应有 `total_raw_samples == 128000`、`total_decimated_samples == 12800`、`block_record_count == 500`；阶段二各信号数组仍只记录前 4096 点。
 - `max_ready_to_release_cycles < 2560000`，即 100 MHz 下小于 25.6 ms；同时记录 `max_process_cycles`。HIL 捕获复制本身计入处理耗时。
+- `lcd_service_call_count > 0`；记录 `max_lcd_service_cycles` 并按 100 MHz 换算为毫秒（周期数 / 100000000 × 1000），与 25.6 ms DMA 半缓冲周期比较。该值是 `ECG_Display_Service` 单次调用时长，不是异步 LCD DMA 完成时间。
 - 所有滤波状态为 `IIR_NOTCH_STATUS_OK`，捕获的滤波输出应为有限值。
 
 ### 频率响应

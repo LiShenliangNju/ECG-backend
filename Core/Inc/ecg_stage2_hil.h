@@ -40,6 +40,8 @@ typedef struct
   volatile uint32_t block_record_count;
   volatile uint32_t max_process_cycles;
   volatile uint32_t max_ready_to_release_cycles;
+  volatile uint32_t lcd_service_call_count;
+  volatile uint32_t max_lcd_service_cycles;
   volatile uint32_t sequence_error_count;
   volatile uint32_t decimation_error_count;
   volatile uint32_t filter_error_count;
@@ -67,6 +69,7 @@ void ECG_Stage2HIL_RecordBlock(const ECG_SampleBlock *block,
                                const float32_t *filtered_samples,
                                uint32_t process_start_cycles);
 void ECG_Stage2HIL_RecordReadyToRelease(uint32_t cycles);
+void ECG_Stage2HIL_RecordLCDService(uint32_t cycles);
 uint8_t ECG_Stage2HIL_IsCaptureComplete(void);
 void ECG_Stage2HIL_RecordStop(HAL_StatusTypeDef tim_status,
                               HAL_StatusTypeDef adc_dma_status,

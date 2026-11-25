@@ -260,8 +260,16 @@ int main(void)
 
     ECG_UpdateKeyThresholds();
 
+#if defined(ECG_STAGE2_HIL)
+    const uint32_t lcd_service_start_cycles =
+        ECG_Stage2HIL_GetCycleCount();
+#endif
     const ECG_DisplayStatus display_service_status =
         ECG_Display_Service(&display_state);
+#if defined(ECG_STAGE2_HIL)
+    ECG_Stage2HIL_RecordLCDService(
+        ECG_Stage2HIL_GetCycleCount() - lcd_service_start_cycles);
+#endif
     if (display_service_status != ECG_DISPLAY_STATUS_OK)
     {
       ECG_StopWithFault(ECG_FAULT_LCD_DRAW,

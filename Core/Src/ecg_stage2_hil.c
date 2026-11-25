@@ -194,6 +194,15 @@ void ECG_Stage2HIL_RecordReadyToRelease(uint32_t cycles)
   }
 }
 
+void ECG_Stage2HIL_RecordLCDService(uint32_t cycles)
+{
+  g_ecg_stage2_hil_capture.lcd_service_call_count++;
+  if (cycles > g_ecg_stage2_hil_capture.max_lcd_service_cycles)
+  {
+    g_ecg_stage2_hil_capture.max_lcd_service_cycles = cycles;
+  }
+}
+
 uint8_t ECG_Stage2HIL_IsCaptureComplete(void)
 {
   return (uint8_t)(g_ecg_stage2_hil_capture.capture_complete != 0U);
