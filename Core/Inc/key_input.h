@@ -6,17 +6,12 @@
 #include <stdint.h>
 
 #define ECG_KEY_DEBOUNCE_MS 20U
-#define ECG_KEY_LONG_PRESS_MS 500U
-#define ECG_KEY_REPEAT_MS 150U
-#define ECG_KEY_SHORT_STEP_MV 0.05f
-#define ECG_KEY_LONG_STEP_MV 0.10f
+#define ECG_KEY_STEP_MV 0.1695f
 
 typedef enum
 {
   ECG_KEY_EVENT_NONE = 0U,
-  ECG_KEY_EVENT_SHORT_PRESS = 1U,
-  ECG_KEY_EVENT_LONG_PRESS = 2U,
-  ECG_KEY_EVENT_REPEAT = 3U
+  ECG_KEY_EVENT_PRESS = 1U
 } ECG_KeyEvent;
 
 typedef enum
@@ -30,11 +25,8 @@ typedef enum
 typedef struct
 {
   uint32_t last_change_ms;
-  uint32_t press_start_ms;
-  uint32_t repeat_due_ms;
   uint8_t debounced_level;
   uint8_t state;
-  uint8_t long_press_armed;
 } ECG_KeyInput;
 
 void ECG_KeyInput_Init(ECG_KeyInput *key);
@@ -45,16 +37,7 @@ uint8_t ECG_KeyInput_IsPressed(const ECG_KeyInput *key);
 
 static inline float32_t ECG_KeyInput_GetStepMv(ECG_KeyEvent event)
 {
-  switch (event)
-  {
-    case ECG_KEY_EVENT_SHORT_PRESS:
-      return ECG_KEY_SHORT_STEP_MV;
-    case ECG_KEY_EVENT_LONG_PRESS:
-    case ECG_KEY_EVENT_REPEAT:
-      return ECG_KEY_LONG_STEP_MV;
-    default:
-      return 0.0f;
-  }
+  return (event == ECG_KEY_EVENT_PRESS) ? ECG_KEY_STEP_MV : 0.0f;
 }
 
 static inline float32_t ECG_KeyInput_ApplyStep(float32_t current_mv,

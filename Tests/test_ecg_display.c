@@ -22,6 +22,8 @@ typedef struct
   uint16_t grid_color;
   uint16_t axis_color;
   uint16_t bottom_color;
+  uint16_t threshold_y;
+  uint16_t trace_pixel_count;
 } ColumnTransfer;
 
 static ColumnTransfer g_column_transfers[512];
@@ -39,6 +41,8 @@ static uint16_t g_scale_label_x;
 static uint16_t g_scale_label_y;
 static uint8_t g_scale_label_mode;
 static char g_scale_label[32];
+static uint16_t g_red_line_y;
+static uint32_t g_red_line_count;
 static uint16_t g_address_x;
 SPI_HandleTypeDef hspi5;
 
@@ -59,6 +63,8 @@ static void ResetMocks(void)
   g_scale_label_y = UINT16_MAX;
   g_scale_label_mode = 0U;
   g_scale_label[0] = '\0';
+  g_red_line_y = UINT16_MAX;
+  g_red_line_count = 0U;
   g_address_x = 0U;
   hspi5.state = HAL_SPI_STATE_READY;
   hspi5.error = HAL_SPI_ERROR_NONE;
@@ -99,6 +105,21 @@ HAL_StatusTypeDef HAL_SPI_Transmit_DMA(SPI_HandleTypeDef *spi,
     transfer->bottom_color =
         (uint16_t)((uint16_t)data[(ECG_DISPLAY_WAVEFORM_H - 1U) * 2U] << 8U) |
         data[(ECG_DISPLAY_WAVEFORM_H - 1U) * 2U + 1U];
+    transfer->threshold_y = UINT16_MAX;
+    for (uint16_t offset = 0U; offset < ECG_DISPLAY_WAVEFORM_H; ++offset)
+    {
+      const uint16_t color =
+          (uint16_t)((uint16_t)data[offset * 2U] << 8U) |
+          data[offset * 2U + 1U];
+      if (color == ECG_DISPLAY_THRESHOLD_COLOR)
+      {
+        transfer->threshold_y = ECG_DISPLAY_WAVEFORM_Y + offset;
+      }
+      if (color == ECG_DISPLAY_TRACE_COLOR)
+      {
+        transfer->trace_pixel_count++;
+      }
+    }
   }
 
   spi->state = (g_dma_never_completes != 0U)
@@ -163,11 +184,13 @@ void LCD_DrawPoint(uint16_t x, uint16_t y, uint16_t color)
 void LCD_DrawLine(uint16_t x1, uint16_t y1,
                   uint16_t x2, uint16_t y2, uint16_t color)
 {
+  if ((color == ECG_DISPLAY_THRESHOLD_COLOR) && (y1 == y2))
+  {
+    g_red_line_y = y1;
+    g_red_line_count++;
+  }
   (void)x1;
-  (void)y1;
   (void)x2;
-  (void)y2;
-  (void)color;
 }
 
 void LCD_DrawRectangle(uint16_t x1, uint16_t y1,
@@ -231,6 +254,7 @@ static int DrainRenderer(ECG_DisplayState *state)
     }
     if ((state->pending_count == 0U) &&
         (state->dma_active == 0U) &&
+        (state->threshold_redraw_pending == 0U) &&
         (state->metrics_dirty == 0U))
     {
       return 0;
@@ -247,6 +271,8 @@ static int TestDmaFrameAndFontSizes(void)
   CHECK_TRUE(state.erase_column == ECG_DISPLAY_ERASE_LEAD_COLUMNS);
   ResetMocks();
 
+  CHECK_TRUE(ECG_Display_UpdateThreshold(&state, 0.10f) ==
+             ECG_DISPLAY_STATUS_OK);
   CHECK_TRUE(ECG_Display_DrawStaticFrame(&state) == ECG_DISPLAY_STATUS_OK);
   CHECK_TRUE(state.initialized == 1U);
   CHECK_TRUE(g_dma_call_count > 1U);
@@ -260,6 +286,65 @@ static int TestDmaFrameAndFontSizes(void)
   CHECK_TRUE(g_scale_label_mode == 1U);
   CHECK_TRUE(g_last_int_size == 16U);
   CHECK_TRUE(g_last_float_size == 16U);
+  CHECK_TRUE(g_red_line_count == 1U);
+  CHECK_TRUE(g_red_line_y == state.threshold_y);
+  return 0;
+}
+
+static int TestThresholdRedrawPreservesWaveform(void)
+{
+  ECG_DisplayState state;
+  const float32_t samples[ECG_DISPLAY_SAMPLES_PER_COLUMN] = {
+    0.3f, 0.3f, 0.3f, 0.3f, 0.3f,
+    0.3f, 0.3f, 0.3f, 0.3f, 0.3f
+  };
+
+  ECG_Display_Init(&state);
+  CHECK_TRUE(ECG_Display_UpdateThreshold(&state, 0.10f) ==
+             ECG_DISPLAY_STATUS_OK);
+  ResetMocks();
+  CHECK_TRUE(ECG_Display_DrawStaticFrame(&state) == ECG_DISPLAY_STATUS_OK);
+  CHECK_TRUE(ECG_Display_UpdateWaveform(&state, samples,
+                                        ECG_DISPLAY_SAMPLES_PER_COLUMN) ==
+             ECG_DISPLAY_STATUS_OK);
+  CHECK_TRUE(DrainRenderer(&state) == 0);
+  CHECK_TRUE(state.rendered_trace[0] == 1U);
+
+  const uint16_t old_threshold_y = state.threshold_y;
+  ResetMocks();
+  CHECK_TRUE(ECG_Display_UpdateThreshold(&state, 0.2695f) ==
+             ECG_DISPLAY_STATUS_OK);
+  CHECK_TRUE(state.threshold_redraw_pending == 1U);
+  CHECK_TRUE(state.threshold_y != old_threshold_y);
+  CHECK_TRUE(DrainRenderer(&state) == 0);
+  CHECK_TRUE(g_column_transfer_count == ECG_DISPLAY_COLUMN_COUNT);
+  for (uint32_t column = 0U; column < ECG_DISPLAY_COLUMN_COUNT; ++column)
+  {
+    CHECK_TRUE(g_column_transfers[column].threshold_y == state.threshold_y);
+    CHECK_TRUE(g_column_transfers[column].threshold_y != old_threshold_y);
+  }
+  CHECK_TRUE(g_column_transfers[0].trace_pixel_count > 0U);
+
+  ResetMocks();
+  CHECK_TRUE(ECG_Display_UpdateThreshold(&state, 0.439f) ==
+             ECG_DISPLAY_STATUS_OK);
+  CHECK_TRUE(ECG_Display_Service(&state) == ECG_DISPLAY_STATUS_OK);
+  CHECK_TRUE(state.dma_active == 1U);
+  CHECK_TRUE(ECG_Display_UpdateThreshold(&state, 0.6085f) ==
+             ECG_DISPLAY_STATUS_OK);
+  CHECK_TRUE(state.threshold_redraw_restart == 1U);
+  CHECK_TRUE(DrainRenderer(&state) == 0);
+  CHECK_TRUE(g_column_transfer_count == ECG_DISPLAY_COLUMN_COUNT + 1U);
+  for (uint32_t column = 1U;
+       column < ECG_DISPLAY_COLUMN_COUNT + 1U; ++column)
+  {
+    CHECK_TRUE(g_column_transfers[column].threshold_y == state.threshold_y);
+  }
+
+  CHECK_TRUE(ECG_Display_UpdateThreshold(&state, -0.01f) ==
+             ECG_DISPLAY_STATUS_INVALID_ARGUMENT);
+  CHECK_TRUE(ECG_Display_UpdateThreshold(&state, NAN) ==
+             ECG_DISPLAY_STATUS_INVALID_SAMPLE);
   return 0;
 }
 
@@ -339,6 +424,10 @@ static int TestInvalidSamplesAndDmaErrors(void)
 int main(void)
 {
   if (TestDmaFrameAndFontSizes() != 0)
+  {
+    return 1;
+  }
+  if (TestThresholdRedrawPreservesWaveform() != 0)
   {
     return 1;
   }

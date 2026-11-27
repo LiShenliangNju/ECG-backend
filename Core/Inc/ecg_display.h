@@ -37,6 +37,7 @@
 #define ECG_DISPLAY_BG_COLOR BLACK
 #define ECG_DISPLAY_TRACE_COLOR GREEN
 #define ECG_DISPLAY_AXIS_COLOR LIGHTBLUE
+#define ECG_DISPLAY_THRESHOLD_COLOR RED
 #define ECG_DISPLAY_TEXT_COLOR WHITE
 
 typedef enum
@@ -78,6 +79,14 @@ typedef struct
   uint8_t dma_stage;
   uint32_t dma_started_tick;
   uint8_t metrics_dirty;
+  uint16_t threshold_y;
+  uint16_t threshold_redraw_column;
+  uint8_t threshold_configured;
+  uint8_t threshold_redraw_pending;
+  uint8_t threshold_redraw_restart;
+  uint8_t rendered_min_y[ECG_DISPLAY_COLUMN_COUNT];
+  uint8_t rendered_max_y[ECG_DISPLAY_COLUMN_COUNT];
+  uint8_t rendered_trace[ECG_DISPLAY_COLUMN_COUNT];
   /* Most recently supplied values; the update API draws the supplied values. */
   float32_t latest_bpm;
   float32_t latest_peak_to_peak_mv;
@@ -105,6 +114,13 @@ ECG_DisplayStatus ECG_Display_Clear(ECG_DisplayState *state);
  * LCD hardware must already be initialized. Foreground only.
  */
 ECG_DisplayStatus ECG_Display_DrawStaticFrame(ECG_DisplayState *state);
+
+/**
+ * Set the positive trigger threshold in mV and redraw its horizontal marker.
+ * The accepted range is 0..1.5 mV. Foreground only.
+ */
+ECG_DisplayStatus ECG_Display_UpdateThreshold(ECG_DisplayState *state,
+                                              float32_t threshold_mv);
 
 /**
  * Append filtered ECG samples (mV) to the rolling waveform.

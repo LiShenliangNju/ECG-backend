@@ -20,8 +20,8 @@
 
 #define ECG_RPEAK_SAMPLE_RATE_HZ 1000U
 #define ECG_RPEAK_DEFAULT_THRESHOLD_MV 0.10f
-#define ECG_RPEAK_THRESHOLD_MIN_MV 0.05f
-#define ECG_RPEAK_THRESHOLD_MAX_MV 0.50f
+#define ECG_RPEAK_THRESHOLD_MIN_MV 0.0f
+#define ECG_RPEAK_THRESHOLD_MAX_MV 1.5f
 #define ECG_RPEAK_HYSTERESIS_MV 0.05f
 #define ECG_RPEAK_CONFIRM_WINDOW_SAMPLES 30U
 #define ECG_RPEAK_MAX_CONFIRM_DELAY_SAMPLES (ECG_RPEAK_CONFIRM_WINDOW_SAMPLES - 1U)
@@ -71,7 +71,7 @@ float32_t ECG_RPeak_GetThreshold(const ECG_RPeakDetector *detector);
 /** 使用配置中的阈值区间更新当前阈值，步进仍由按键事件宏定义。 */
 void ECG_RPeak_SetThresholdConfig(ECG_RPeakDetector *detector,
                                  const ECG_RPeakThresholdConfig *config);
-/** 按短按、长按或重复事件增加或减少阈值；未知事件不改变阈值。 */
+/** 每次去抖后的按下事件按固定步进增加或减少阈值。 */
 float32_t ECG_RPeak_ApplyKeyStep(ECG_RPeakDetector *detector,
                                  ECG_KeyEvent event,
                                  uint8_t increase);

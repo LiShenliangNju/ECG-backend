@@ -105,7 +105,7 @@ volatile uint32_t g_ecg_shutdown_status;
 static void ECG_InitializeTopLevelModules(void);
 static ECG_DisplayStatus ECG_ProcessSampleBlock(const ECG_SampleBlock *block,
                                                 ECG_DisplayState *display_state);
-static void ECG_UpdateKeyThresholds(void);
+static void ECG_UpdateKeyThresholds(ECG_DisplayState *display_state);
 static void ECG_StopWithFault(ECG_FaultReason reason, uint32_t detail);
 #if defined(ECG_STAGE2_HIL)
 static void ECG_Stage2HIL_StopAcquisition(void);
@@ -161,6 +161,13 @@ int main(void)
 
   ECG_DisplayState display_state;
   ECG_Display_Init(&display_state);
+  ECG_DisplayStatus threshold_status =
+      ECG_Display_UpdateThreshold(&display_state,
+                                 ECG_RPEAK_DEFAULT_THRESHOLD_MV);
+  if (threshold_status != ECG_DISPLAY_STATUS_OK)
+  {
+    ECG_StopWithFault(ECG_FAULT_LCD_DRAW, (uint32_t)threshold_status);
+  }
   const ECG_DisplayStatus display_status =
       ECG_Display_DrawStaticFrame(&display_state);
   if (display_status != ECG_DISPLAY_STATUS_OK)
@@ -258,7 +265,7 @@ int main(void)
                         (uint32_t)block_result);
     }
 
-    ECG_UpdateKeyThresholds();
+    ECG_UpdateKeyThresholds(&display_state);
 
 #if defined(ECG_STAGE2_HIL)
     const uint32_t lcd_service_start_cycles =
@@ -508,7 +515,7 @@ static ECG_DisplayStatus ECG_ProcessSampleBlock(const ECG_SampleBlock *block,
   return ECG_DISPLAY_STATUS_OK;
 }
 
-static void ECG_UpdateKeyThresholds(void)
+static void ECG_UpdateKeyThresholds(ECG_DisplayState *display_state)
 {
   const uint32_t now_ms = HAL_GetTick();
   ECG_KeyEvent key1_event = ECG_KeyInput_Update(&g_key1, now_ms,
@@ -524,6 +531,14 @@ static void ECG_UpdateKeyThresholds(void)
   if (key2_event != ECG_KEY_EVENT_NONE)
   {
     ECG_RPeak_ApplyKeyStep(&g_rpeak_detector, key2_event, 0U);
+  }
+
+  const ECG_DisplayStatus display_status =
+      ECG_Display_UpdateThreshold(display_state,
+                                  ECG_RPeak_GetThreshold(&g_rpeak_detector));
+  if (display_status != ECG_DISPLAY_STATUS_OK)
+  {
+    ECG_StopWithFault(ECG_FAULT_LCD_DRAW, (uint32_t)display_status);
   }
 }
 

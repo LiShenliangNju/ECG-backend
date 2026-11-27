@@ -38,7 +38,7 @@
     }                                                                      \
   } while (0)
 
-static int TestShortPressAndDebounce(void)
+static int TestDebouncedPressOnlyFiresOnce(void)
 {
   ECG_KeyInput key;
   ECG_KeyEvent event;
@@ -49,31 +49,20 @@ static int TestShortPressAndDebounce(void)
   event = ECG_KeyInput_Update(&key, 10U, 1U);
   CHECK_EVENT(event, ECG_KEY_EVENT_NONE);
   event = ECG_KeyInput_Update(&key, 20U, 1U);
+  CHECK_EVENT(event, ECG_KEY_EVENT_PRESS);
+  CHECK_TRUE(ECG_KeyInput_IsPressed(&key) == 1U);
+  event = ECG_KeyInput_Update(&key, 1000U, 1U);
   CHECK_EVENT(event, ECG_KEY_EVENT_NONE);
-  event = ECG_KeyInput_Update(&key, 40U, 0U);
+  event = ECG_KeyInput_Update(&key, 1010U, 0U);
   CHECK_EVENT(event, ECG_KEY_EVENT_NONE);
-  event = ECG_KeyInput_Update(&key, 60U, 0U);
-  CHECK_EVENT(event, ECG_KEY_EVENT_SHORT_PRESS);
+  event = ECG_KeyInput_Update(&key, 1030U, 0U);
+  CHECK_EVENT(event, ECG_KEY_EVENT_NONE);
   CHECK_TRUE(ECG_KeyInput_IsPressed(&key) == 0U);
-  return 0;
-}
 
-static int TestLongPressRepeat(void)
-{
-  ECG_KeyInput key;
-  ECG_KeyEvent event;
-
-  ECG_KeyInput_Init(&key);
-  for (uint32_t ms = 0U; ms <= ECG_KEY_DEBOUNCE_MS; ++ms)
-  {
-    event = ECG_KeyInput_Update(&key, ms, 1U);
-    CHECK_EVENT(event, ECG_KEY_EVENT_NONE);
-  }
-
-  event = ECG_KeyInput_Update(&key, ECG_KEY_LONG_PRESS_MS + ECG_KEY_DEBOUNCE_MS, 1U);
-  CHECK_EVENT(event, ECG_KEY_EVENT_LONG_PRESS);
-  event = ECG_KeyInput_Update(&key, ECG_KEY_LONG_PRESS_MS + ECG_KEY_DEBOUNCE_MS + ECG_KEY_REPEAT_MS, 1U);
-  CHECK_EVENT(event, ECG_KEY_EVENT_REPEAT);
+  event = ECG_KeyInput_Update(&key, 1040U, 1U);
+  CHECK_EVENT(event, ECG_KEY_EVENT_NONE);
+  event = ECG_KeyInput_Update(&key, 1060U, 1U);
+  CHECK_EVENT(event, ECG_KEY_EVENT_PRESS);
   return 0;
 }
 
@@ -81,24 +70,17 @@ static int TestThresholdStepHelper(void)
 {
   float32_t current = 0.10f;
 
-  CHECK_FLOAT_EQUAL(ECG_KeyInput_ApplyStep(current, ECG_KEY_EVENT_SHORT_PRESS, 1U),
-                    0.15f);
-  CHECK_FLOAT_EQUAL(ECG_KeyInput_ApplyStep(current, ECG_KEY_EVENT_SHORT_PRESS, 0U),
-                    0.05f);
-  CHECK_FLOAT_EQUAL(ECG_KeyInput_ApplyStep(current, ECG_KEY_EVENT_LONG_PRESS, 1U),
-                    0.20f);
-  CHECK_FLOAT_EQUAL(ECG_KeyInput_ApplyStep(current, ECG_KEY_EVENT_REPEAT, 0U),
-                    0.0f);
+  CHECK_FLOAT_EQUAL(ECG_KeyInput_ApplyStep(current, ECG_KEY_EVENT_PRESS, 1U),
+                    0.2695f);
+  CHECK_FLOAT_EQUAL(ECG_KeyInput_ApplyStep(0.2695f, ECG_KEY_EVENT_PRESS, 0U),
+                    current);
+  CHECK_FLOAT_EQUAL(ECG_KeyInput_GetStepMv(ECG_KEY_EVENT_NONE), 0.0f);
   return 0;
 }
 
 int main(void)
 {
-  if (TestShortPressAndDebounce() != 0)
-  {
-    return 1;
-  }
-  if (TestLongPressRepeat() != 0)
+  if (TestDebouncedPressOnlyFiresOnce() != 0)
   {
     return 1;
   }

@@ -15,15 +15,17 @@
  * erase_column initialized 30 columns ahead of write_column. Each complete group
  * of ten input samples advances both cursors once. samples_in_column preserves
  * the grouping phase independently of the wrapping sample counter.
- * The LCD plot occupies y=14..193; its vertical mapping assumes a +/-1.5 mV
+ * The LCD plot occupies y=16..193; its vertical mapping assumes a +/-1.5 mV
  * display range, with out-of-range finite samples saturated at the limits.
  */
 
 #define ECG_DISPLAY_DMA_BUFFER_BYTES 1024U
 #define ECG_DISPLAY_DMA_TIMEOUT_MS 20U
 #define ECG_DISPLAY_COLUMN_DMA_BYTES (ECG_DISPLAY_WAVEFORM_H * 2U)
+#define ECG_DISPLAY_VERTICAL_RANGE_MV 1.5f
 #define ECG_DISPLAY_DMA_STAGE_ERASE 0U
 #define ECG_DISPLAY_DMA_STAGE_DRAW 1U
+#define ECG_DISPLAY_DMA_STAGE_THRESHOLD_REDRAW 2U
 
 static uint8_t g_display_dma_buffer[ECG_DISPLAY_DMA_BUFFER_BYTES];
 static uint8_t g_display_column_dma_buffer[ECG_DISPLAY_COLUMN_DMA_BYTES];
@@ -139,7 +141,7 @@ static void ECG_Display_DrawScaleLabels(void)
 /* Maps zero to the center axis and +/-1.5 mV to the plot's vertical limits. */
 static uint16_t ECG_Display_MapY(float32_t sample_mv)
 {
-  const float32_t y_range = 1.5f;
+  const float32_t y_range = ECG_DISPLAY_VERTICAL_RANGE_MV;
   float32_t clamped = sample_mv;
   if (clamped < -y_range)
   {
@@ -160,7 +162,9 @@ static uint16_t ECG_Display_MapY(float32_t sample_mv)
 static void ECG_Display_BuildColumn(uint16_t column,
                                     uint16_t min_y,
                                     uint16_t max_y,
-                                    uint8_t draw_trace)
+                                    uint8_t draw_trace,
+                                    uint16_t threshold_y,
+                                    uint8_t threshold_configured)
 {
   for (uint16_t offset = 0U; offset < ECG_DISPLAY_WAVEFORM_H; ++offset)
   {
@@ -183,6 +187,10 @@ static void ECG_Display_BuildColumn(uint16_t column,
         (y <= ((min_y > max_y) ? min_y : max_y)))
     {
       color = ECG_DISPLAY_TRACE_COLOR;
+    }
+    if ((threshold_configured != 0U) && (y == threshold_y))
+    {
+      color = ECG_DISPLAY_THRESHOLD_COLOR;
     }
 
     g_display_column_dma_buffer[offset * 2U] = (uint8_t)(color >> 8U);
@@ -241,9 +249,14 @@ ECG_DisplayStatus ECG_Display_Clear(ECG_DisplayState *state)
   state->samples_in_column = 0U;
   state->history_head = 0U;
   state->history_count = 0U;
+  memset(state->rendered_trace, 0, sizeof(state->rendered_trace));
   state->pending_head = 0U;
   state->pending_tail = 0U;
+  state->pending_count = 0U;
   state->dma_stage = ECG_DISPLAY_DMA_STAGE_ERASE;
+  state->threshold_redraw_column = 0U;
+  state->threshold_redraw_pending = 0U;
+  state->threshold_redraw_restart = 0U;
   state->metrics_dirty = 0U;
   state->latest_bpm = 0.0f;
   state->latest_peak_to_peak_mv = 0.0f;
@@ -269,6 +282,16 @@ ECG_DisplayStatus ECG_Display_DrawStaticFrame(ECG_DisplayState *state)
     return status;
   }
 
+  memset(state->rendered_trace, 0, sizeof(state->rendered_trace));
+  state->threshold_redraw_pending = 0U;
+  state->threshold_redraw_column = 0U;
+  state->threshold_redraw_restart = 0U;
+  if (state->threshold_configured != 0U)
+  {
+    LCD_DrawLine(0U, state->threshold_y,
+                 ECG_DISPLAY_WIDTH - 1U, state->threshold_y,
+                 ECG_DISPLAY_THRESHOLD_COLOR);
+  }
   ECG_Display_DrawScaleLabels();
   LCD_ShowString(8U, 204U, (const uint8_t *)"ECG", RED, BLACK, 16U, 0U);
   LCD_ShowString(64U, 204U, (const uint8_t *)"BPM", GREEN, BLACK, 16U, 0U);
@@ -276,6 +299,43 @@ ECG_DisplayStatus ECG_Display_DrawStaticFrame(ECG_DisplayState *state)
   ECG_Display_DrawMetricsNow(state);
   state->metrics_dirty = 0U;
   state->initialized = 1U;
+  return ECG_DISPLAY_STATUS_OK;
+}
+
+ECG_DisplayStatus ECG_Display_UpdateThreshold(ECG_DisplayState *state,
+                                              float32_t threshold_mv)
+{
+  if (state == NULL)
+  {
+    return ECG_DISPLAY_STATUS_INVALID_ARGUMENT;
+  }
+  if (!isfinite(threshold_mv))
+  {
+    return ECG_DISPLAY_STATUS_INVALID_SAMPLE;
+  }
+  if ((threshold_mv < 0.0f) ||
+      (threshold_mv > ECG_DISPLAY_VERTICAL_RANGE_MV))
+  {
+    return ECG_DISPLAY_STATUS_INVALID_ARGUMENT;
+  }
+
+  const uint16_t threshold_y = ECG_Display_MapY(threshold_mv);
+  if ((state->threshold_configured == 0U) ||
+      (state->threshold_y != threshold_y))
+  {
+    state->threshold_y = threshold_y;
+    state->threshold_configured = 1U;
+    if (state->initialized != 0U)
+    {
+      if ((state->dma_active != 0U) &&
+          (state->dma_stage == ECG_DISPLAY_DMA_STAGE_THRESHOLD_REDRAW))
+      {
+        state->threshold_redraw_restart = 1U;
+      }
+      state->threshold_redraw_column = 0U;
+      state->threshold_redraw_pending = 1U;
+    }
+  }
   return ECG_DISPLAY_STATUS_OK;
 }
 
@@ -431,14 +491,42 @@ ECG_DisplayStatus ECG_Display_Service(ECG_DisplayState *state)
     state->dma_active = 0U;
     if (state->dma_stage == ECG_DISPLAY_DMA_STAGE_ERASE)
     {
+      const ECG_DisplayPendingColumn *pending =
+          &state->pending_columns[state->pending_head];
+      state->rendered_trace[pending->erase_column] = 0U;
       state->dma_stage = ECG_DISPLAY_DMA_STAGE_DRAW;
     }
-    else
+    else if (state->dma_stage == ECG_DISPLAY_DMA_STAGE_DRAW)
     {
+      const ECG_DisplayPendingColumn *pending =
+          &state->pending_columns[state->pending_head];
+      state->rendered_min_y[pending->write_column] =
+          (uint8_t)pending->min_y;
+      state->rendered_max_y[pending->write_column] =
+          (uint8_t)pending->max_y;
+      state->rendered_trace[pending->write_column] = 1U;
       state->pending_head =
           (uint8_t)((state->pending_head + 1U) %
                     ECG_DISPLAY_PENDING_COLUMN_CAPACITY);
       state->pending_count--;
+      state->dma_stage = ECG_DISPLAY_DMA_STAGE_ERASE;
+    }
+    else
+    {
+      if (state->threshold_redraw_restart != 0U)
+      {
+        state->threshold_redraw_column = 0U;
+        state->threshold_redraw_restart = 0U;
+      }
+      else
+      {
+        state->threshold_redraw_column++;
+        if (state->threshold_redraw_column >= ECG_DISPLAY_COLUMN_COUNT)
+        {
+          state->threshold_redraw_column = 0U;
+          state->threshold_redraw_pending = 0U;
+        }
+      }
       state->dma_stage = ECG_DISPLAY_DMA_STAGE_ERASE;
     }
   }
@@ -452,7 +540,8 @@ ECG_DisplayStatus ECG_Display_Service(ECG_DisplayState *state)
     const uint16_t column =
         (draw_trace != 0U) ? pending->write_column : pending->erase_column;
     ECG_Display_BuildColumn(column, pending->min_y, pending->max_y,
-                            draw_trace);
+                            draw_trace, state->threshold_y,
+                            state->threshold_configured);
     LCD_Address_Set(column, ECG_DISPLAY_WAVEFORM_Y,
                     column,
                     ECG_DISPLAY_WAVEFORM_Y + ECG_DISPLAY_WAVEFORM_H - 1U);
@@ -464,6 +553,30 @@ ECG_DisplayStatus ECG_Display_Service(ECG_DisplayState *state)
       return ECG_DISPLAY_STATUS_DMA_ERROR;
     }
     state->dma_active = 1U;
+    state->dma_started_tick = HAL_GetTick();
+    return ECG_DISPLAY_STATUS_OK;
+  }
+
+  if (state->threshold_redraw_pending != 0U)
+  {
+    const uint16_t column = state->threshold_redraw_column;
+    ECG_Display_BuildColumn(column, state->rendered_min_y[column],
+                            state->rendered_max_y[column],
+                            state->rendered_trace[column],
+                            state->threshold_y,
+                            state->threshold_configured);
+    LCD_Address_Set(column, ECG_DISPLAY_WAVEFORM_Y,
+                    column,
+                    ECG_DISPLAY_WAVEFORM_Y + ECG_DISPLAY_WAVEFORM_H - 1U);
+    LCD_DC_Set();
+
+    if (HAL_SPI_Transmit_DMA(&hspi5, g_display_column_dma_buffer,
+                             ECG_DISPLAY_COLUMN_DMA_BYTES) != HAL_OK)
+    {
+      return ECG_DISPLAY_STATUS_DMA_ERROR;
+    }
+    state->dma_active = 1U;
+    state->dma_stage = ECG_DISPLAY_DMA_STAGE_THRESHOLD_REDRAW;
     state->dma_started_tick = HAL_GetTick();
     return ECG_DISPLAY_STATUS_OK;
   }

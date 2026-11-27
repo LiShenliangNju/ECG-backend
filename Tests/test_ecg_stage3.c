@@ -215,10 +215,19 @@ static void TestThresholdAdjustment(void)
   ECG_RPeak_Init(&detector);
   CHECK_FLOAT_EQUAL(ECG_RPeak_SetThreshold(&detector, 2.0f),
                     ECG_RPEAK_THRESHOLD_MAX_MV);
-  CHECK_FLOAT_EQUAL(ECG_RPeak_SetThreshold(&detector, 0.001f),
+  CHECK_FLOAT_EQUAL(ECG_RPeak_SetThreshold(&detector, -0.001f),
                     ECG_RPEAK_THRESHOLD_MIN_MV);
+  CHECK_FLOAT_EQUAL(ECG_RPeak_SetThreshold(&detector, 0.001f), 0.001f);
+  CHECK_FLOAT_EQUAL(ECG_RPeak_SetThreshold(&detector, 0.10f), 0.10f);
+  CHECK_FLOAT_EQUAL(ECG_RPeak_ApplyKeyStep(&detector, ECG_KEY_EVENT_PRESS, 1U),
+                    0.2695f);
+  CHECK_FLOAT_EQUAL(ECG_RPeak_ApplyKeyStep(&detector, ECG_KEY_EVENT_PRESS, 0U),
+                    0.10f);
+  CHECK_FLOAT_EQUAL(ECG_RPeak_SetThreshold(&detector, 0.0f), 0.0f);
+  CHECK_FLOAT_EQUAL(ECG_RPeak_SetThreshold(&detector, 1.5f), 1.5f);
+  CHECK_FLOAT_EQUAL(ECG_RPeak_GetThreshold(&detector), 1.5f);
+
   CHECK_FLOAT_EQUAL(ECG_RPeak_SetThreshold(&detector, 0.4f), 0.4f);
-  CHECK_FLOAT_EQUAL(ECG_RPeak_GetThreshold(&detector), 0.4f);
 
   ClearSignal();
   AddPulse(1000U, 0.35f);

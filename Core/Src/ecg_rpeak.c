@@ -118,12 +118,8 @@ float32_t ECG_RPeak_ApplyKeyStep(ECG_RPeakDetector *detector,
 
   switch (event)
   {
-    case ECG_KEY_EVENT_SHORT_PRESS:
-      step_mv = ECG_KEY_SHORT_STEP_MV;
-      break;
-    case ECG_KEY_EVENT_LONG_PRESS:
-    case ECG_KEY_EVENT_REPEAT:
-      step_mv = ECG_KEY_LONG_STEP_MV;
+    case ECG_KEY_EVENT_PRESS:
+      step_mv = ECG_KEY_STEP_MV;
       break;
     default:
       return detector->threshold_mv;
