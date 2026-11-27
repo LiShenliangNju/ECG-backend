@@ -35,6 +35,10 @@ static uint8_t g_dma_data_is_black;
 static uint8_t g_last_string_size;
 static uint8_t g_last_int_size;
 static uint8_t g_last_float_size;
+static uint16_t g_scale_label_x;
+static uint16_t g_scale_label_y;
+static uint8_t g_scale_label_mode;
+static char g_scale_label[32];
 static uint16_t g_address_x;
 SPI_HandleTypeDef hspi5;
 
@@ -51,6 +55,10 @@ static void ResetMocks(void)
   g_last_string_size = 0U;
   g_last_int_size = 0U;
   g_last_float_size = 0U;
+  g_scale_label_x = UINT16_MAX;
+  g_scale_label_y = UINT16_MAX;
+  g_scale_label_mode = 0U;
+  g_scale_label[0] = '\0';
   g_address_x = 0U;
   hspi5.state = HAL_SPI_STATE_READY;
   hspi5.error = HAL_SPI_ERROR_NONE;
@@ -176,13 +184,17 @@ void LCD_ShowString(uint16_t x, uint16_t y, const uint8_t *text,
                     uint16_t foreground, uint16_t background,
                     uint8_t size, uint8_t mode)
 {
-  (void)x;
-  (void)y;
-  (void)text;
   (void)foreground;
   (void)background;
-  (void)mode;
   g_last_string_size = size;
+  if ((x == 0U) && (y == 0U))
+  {
+    g_scale_label_x = x;
+    g_scale_label_y = y;
+    g_scale_label_mode = mode;
+    strncpy(g_scale_label, (const char *)text, sizeof(g_scale_label) - 1U);
+    g_scale_label[sizeof(g_scale_label) - 1U] = '\0';
+  }
 }
 
 void LCD_ShowIntNum(uint16_t x, uint16_t y, uint16_t value, uint8_t length,
@@ -241,6 +253,11 @@ static int TestDmaFrameAndFontSizes(void)
   CHECK_TRUE(g_dma_bytes == ECG_DISPLAY_WIDTH * ECG_DISPLAY_HEIGHT * 2U);
   CHECK_TRUE(g_dma_data_is_black == 1U);
   CHECK_TRUE(g_last_string_size == 16U);
+  CHECK_TRUE(strcmp(g_scale_label, "X:200ms/div Y:0.339mV/div") == 0);
+  CHECK_TRUE(g_scale_label_x == 0U);
+  CHECK_TRUE(g_scale_label_y + 16U <= ECG_DISPLAY_WAVEFORM_Y);
+  CHECK_TRUE(strlen(g_scale_label) * 8U <= ECG_DISPLAY_WIDTH);
+  CHECK_TRUE(g_scale_label_mode == 1U);
   CHECK_TRUE(g_last_int_size == 16U);
   CHECK_TRUE(g_last_float_size == 16U);
   return 0;

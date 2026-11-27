@@ -128,6 +128,14 @@ static ECG_DisplayStatus ECG_Display_DrawGrid(void)
   return ECG_DISPLAY_STATUS_OK;
 }
 
+/* The labels occupy the 16-pixel margin above the plot. */
+static void ECG_Display_DrawScaleLabels(void)
+{
+  LCD_ShowString(0U, 0U,
+                 (const uint8_t *)"X:200ms/div Y:0.339mV/div",
+                 WHITE, BLACK, 16U, 1U);
+}
+
 /* Maps zero to the center axis and +/-1.5 mV to the plot's vertical limits. */
 static uint16_t ECG_Display_MapY(float32_t sample_mv)
 {
@@ -261,6 +269,7 @@ ECG_DisplayStatus ECG_Display_DrawStaticFrame(ECG_DisplayState *state)
     return status;
   }
 
+  ECG_Display_DrawScaleLabels();
   LCD_ShowString(8U, 204U, (const uint8_t *)"ECG", RED, BLACK, 16U, 0U);
   LCD_ShowString(64U, 204U, (const uint8_t *)"BPM", GREEN, BLACK, 16U, 0U);
   LCD_ShowString(144U, 204U, (const uint8_t *)"mVpp", CYAN, BLACK, 16U, 0U);
